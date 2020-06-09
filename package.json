@@ -1,0 +1,17 @@
+{
+  "name": "fontanalyzer",
+  "version": "0.0.1",
+  "main": "main.js",
+  "scripts": {
+    "test": "echo yeeeeeeeeeeet"
+  },
+  "author": "",
+  "license": "GPL-3.0-or-later",
+  "description": "",
+  "dependencies": {
+    "canvas": "^2.6.1",
+    "crc": "^3.8.0",
+    "glob": "^7.1.6",
+    "sharp": "^0.25.3"
+  }
+}

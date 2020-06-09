@@ -1,0 +1,199 @@
+We are going to draw pngs. There will be sets for each font and in that set will be image for each character.
+I will use node-canvas for that. I tried the simple example from its page:
+```const { createCanvas, loadImage } = require('canvas')
+   const canvas = createCanvas(200, 200)
+   const ctx = canvas.getContext('2d')
+
+   // Write "Awesome!"
+   ctx.font = '30px Impact'
+   ctx.rotate(0.1)
+   ctx.fillText('Awesome!', 50, 100)
+
+   // Draw line under text
+   var text = ctx.measureText('Awesome!')
+   ctx.strokeStyle = 'rgba(0,0,0,0.5)'
+   ctx.beginPath()
+   ctx.lineTo(50, 102)
+   ctx.lineTo(50 + text.width, 102)
+   ctx.stroke()
+
+   ctx.drawImage(image, 50, 0, 70, 70)
+
+   console.log('<img src="' + canvas.toDataURL() + '" />')```
+
+the element is rendered as expected. Now I need to save it as file - with fs module. I will use experimental promises(experimental at the time of writing) - living on the edge.
+
+```const { createCanvas, loadImage } = require('canvas')
+   const canvas = createCanvas(200, 200)
+   const ctx = canvas.getContext('2d')
+   const fs = require('fs').promises
+   // Write "Awesome!"
+   ctx.font = '30px Lato'
+   ctx.rotate(0.1)
+   ctx.fillText('Awesome!', 50, 100)
+
+
+   // Draw line under text
+   var text = ctx.measureText('Awesome!')
+   ctx.strokeStyle = 'rgba(0,0,0,0.5)'
+   ctx.beginPath()
+   ctx.lineTo(50, 102)
+   ctx.lineTo(50 + text.width, 102)
+   ctx.stroke()
+
+   fs.writeFile("export/test.png",canvas.toBuffer());```
+
+
+Went to the repository that google uses for free fonts - https://github.com/google/fonts/. I cloned it :)
+Upon further inspection, variable fonts use directory static and nonvariable are just in its root. I am going to check if there is a static directory, if yes, i am going to take just a regular ttf from it.
+Well, sometimes there is  capital letter in middle of its name. There is also METADATA.pb file in each font dir:
+
+```
+name: "Dosis"
+designer: "Impallari Type"
+license: "OFL"
+category: "SANS_SERIF"
+date_added: "2019-01-23"
+fonts {
+  name: "Dosis"
+  style: "normal"
+  weight: 200
+  filename: "Dosis[wght].ttf"
+  post_script_name: "Dosis-ExtraLight"
+  full_name: "Dosis ExtraLight"
+  copyright: "Copyright 2011 The Dosis Project Authors (impallari@gmail.com)"
+}
+subsets: "latin"
+subsets: "latin-ext"
+subsets: "menu"
+subsets: "vietnamese"
+axes {
+  tag: "wght"
+  min_value: 200.0
+  max_value: 800.0
+}
+
+```
+There is name defined in this METADATA.pb file, but i could not find any pb parser and I wasn't in the mood for writing my own.
+I hope I won't need any of the other values later, as I would have to write that parser
+For now, I am going to recursively traverse files in fonts repository. If the filename ends in .ttf, I will assume it is font file.
+For this, I will use npm module 'glob', as advised by https://stackoverflow.com/questions/5827612/node-js-fs-readdir-recursive-directory-search ;)
+
+```
+glob("googlefonts/fonts/ofl/**/*.ttf", (err, files) => {
+console.log(files)
+})
+```
+well, this seems pretty easy, maybe I could switch it later to promises instead of callbacks, if it is possible.
+Now I need an unique identifier of a font, but it should be different for different weights of the font and italic/regular.
+The easiest solution (not the best, my JS instinct says) is doing a crc32 over a filename - we will get fixed size, unique identifiers.
+The only caveat of it is that a filename like "1a692b90.png" won't tell anything about that image, but I will fix this later, by using dictionary or something similar.
+
+```
+const { crc32 } = require('crc');
+const fs = require('fs').promises
+var glob = require("glob");
+const { createCanvas, loadImage, registerFont } = require('canvas')
+
+crc32('hello').toString(16);
+let fonts;
+
+glob("googlefonts/fonts/ofl/**/*.ttf", (err, files) => {
+  fonts = files;
+  files.forEach(font => {
+    registerFont(font, {family: crc32(font).toString(16)});
+  })
+  drawFonts(fonts);
+})
+let drawFonts = (fonts) => {
+  fonts.forEach((font) => {
+    const canvas = createCanvas(200, 200)
+    const ctx = canvas.getContext('2d')
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+// Write "Awesome!"
+    ctx.font = `32px ${crc32(font).toString(16)}`
+    ctx.fillText('a!', 50, 100)
+
+// Draw line under text
+    /*
+    var text = ctx.measureText('Awesome!')
+    ctx.strokeStyle = 'rgba(0,0,0,0.5)'
+    ctx.beginPath()
+    ctx.lineTo(50, 102)
+    ctx.lineTo(50 + text.width, 102)
+    ctx.stroke()*/
+
+    fs.writeFile(`export/${crc32(font).toString(16)}.png`,canvas.toBuffer());
+  })
+
+
+}
+```
+
+this will succesfuly generate around 3000 images of letter 'a' in every font.
+
+well, but how will I find similarities? comparing it to each other would take O(n^2) time, and that would be fairly long with 3000 elements and elements being images.
+
+besides, if I take roboto 'a' and translate it by 1 pixel, it will make huge difference when comparing pixel to pixel.
+
+What makes 2 letters look similar to the human eye? I cannot get its boundaries and scale every one of them to same height, because size also matters (punAlert).
+
+for now, we will rely on simply centering the letter and then comparing it pixel by pixel. The trouble with this is that every letter has baseline at different level
+
+But what can we do with asymptotic time complexity? Right now, we are going to compare 3000*3000*200*200 pixels - that is really hUmONgOuS.
+
+I decided to crop images, after some searching, I have found marvelous npm module sharp - https://sharp.pixelplumbing.com/.
+From the benchmarks, it looks like it is fast. Really fast
+
+```
+    fs.writeFile(`export/${crc32(font).toString(16)}.png`,await sharp(canvas.toBuffer()).trim().toBuffer());
+```
+
+well, this trimmed all of the images and the code is still as fast as without it. I am very impressed
+
+looks like we can do some real quick art with this, let's stack these pictures together with sharp - image with 3000 letters, every 100 pixels, ratio 16:9 - that makes around 8000*4500 pixels.
+I chained .composite calls like this:
+```
+globalCanvas = await globalCanvas.composite([{
+      blend: "add",
+      input: await result,
+      top: (Math.floor(index / 80)) * 100 + 50,
+      left: (index % 80) * 100 + 50
+    }])
+```
+well, not really real quick, because the trim function throws UnhandledPromiseRejectionWarning: Error: Unexpected error while trimming. Despite not being a promise - so I cannot use catch or then clause.
+
+I've tried to wrap it with try...catch, but unsuccessfully.
+
+The toBuffer function returns promise, so I took an advantage of that and now I overcame trim exceptions
+
+```let result = await sharp(canvas.toBuffer(), {failOnError: false}).trim().png().toBuffer().catch((e) => {
+         console.log(e, font);
+       });
+       if(!result) continue
+```
+i am using for...await of cycle, to make sure every composition executes in order
+
+I have just found out that you cannot do multiple .composite [za sebou]. Well, that wouldn't cause troubles, but there is no mention in documentation.
+Now I am pushing results to an array and in the end, I composite over entire array.
+As the elements in array have the position, I can change the for...await of cycle to forEach or similar - no need to wait.
+
+I need to make sure that I write the final file after every composite creation has resolved - Promise.all
+It's funny that the composite problem made me move the compositing to the end of the code(doing all of compositing at once and not after every letter), vastly improving the performance
+
+Well, I just had to restart my computer, because the compositing of 3000 images took all of my RAM.
+
+I divided 3000 images to arrays of 128 and applied them one after another, resulting in not using that much RAM.
+
+Now for the compare function. We need to compare 2 silhouettes of letters - for now, we will just scale the trimmed rasters of them, XOR them and count the pixels.
+We will start with comparing letter "g" - there is lot of variety in this letter across different fonts IMHO.
+
+So we will start with loading 3 different letters.
+```
+pic1 = sharp("./export/1a692b90.png")
+pic2 = sharp("./export/1a221001.png")
+pic3 = sharp("./export/1ac4c6b2.png")
+```
+
+now the sharp library offers us everything we need:
